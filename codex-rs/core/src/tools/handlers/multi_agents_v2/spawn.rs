@@ -32,19 +32,24 @@ impl ToolExecutor<ToolInvocation> for Handler {
     }
 
     fn handle(&self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'_> {
-        Box::pin(async move { handle_spawn_agent(invocation).await.map(boxed_tool_output) })
+        let message_format = self.options.message_format;
+        Box::pin(async move {
+            handle_spawn_agent(invocation, message_format)
+                .await
+                .map(boxed_tool_output)
+        })
     }
 }
 
 async fn handle_spawn_agent(
     invocation: ToolInvocation,
+    message_format: crate::tools::handlers::multi_agents_spec::InterAgentMessageFormat,
 ) -> Result<SpawnAgentResult, FunctionCallError> {
     let ToolInvocation {
         session,
         turn,
         payload,
         call_id,
-        source,
         ..
     } = invocation;
     let arguments = function_arguments(payload)?;
@@ -108,7 +113,7 @@ async fn handle_spawn_agent(
         author,
         new_agent_path.clone(),
         message,
-        &source,
+        message_format,
         /*trigger_turn*/ true,
     );
     let context = AgentCommunicationContext::new(AgentCommunicationKind::Spawn, session.thread_id);

@@ -80,6 +80,7 @@ use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
 use codex_protocol::config_types::Verbosity as VerbosityConfig;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
+use codex_protocol::models::plaintext_agent_message_content;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
 use codex_protocol::protocol::InternalSessionSource;
@@ -858,6 +859,27 @@ impl ModelClient {
                     *encrypted_function_args = None;
                 }
             }
+            // Non-OpenAI providers do not understand the OpenAI-specific
+            // `agent_message` item type. Convert plaintext agent messages
+            // into standard user-role text messages so the subagent actually
+            // receives its task assignment.
+            input = input
+                .into_iter()
+                .map(|item| {
+                    if let ResponseItem::AgentMessage { content, .. } = &item
+                        && let Some(text) = plaintext_agent_message_content(content)
+                    {
+                        return ResponseItem::Message {
+                            id: None,
+                            role: "user".to_string(),
+                            content: vec![ContentItem::InputText { text }],
+                            phase: None,
+                            internal_chat_message_metadata_passthrough: None,
+                        };
+                    }
+                    item
+                })
+                .collect();
         }
         let (instructions, tools) = if model_info.use_responses_lite {
             let tools = create_tools_json_for_responses_api(&prompt.tools)?;

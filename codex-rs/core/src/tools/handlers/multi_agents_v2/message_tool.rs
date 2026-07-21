@@ -54,13 +54,13 @@ pub(crate) async fn handle_message_string_tool(
     mode: MessageDeliveryMode,
     target: String,
     message: String,
+    message_format: crate::tools::handlers::multi_agents_spec::InterAgentMessageFormat,
 ) -> Result<FunctionToolOutput, FunctionCallError> {
     let message = message_content(message)?;
     let ToolInvocation {
         session,
         turn,
         call_id,
-        source,
         ..
     } = invocation;
     let receiver_thread_id = resolve_agent_target(&session, &turn, &target).await?;
@@ -97,7 +97,7 @@ pub(crate) async fn handle_message_string_tool(
         author,
         receiver_agent_path.clone(),
         message,
-        &source,
+        message_format,
         mode.trigger_turn(),
     );
     let kind = match mode {

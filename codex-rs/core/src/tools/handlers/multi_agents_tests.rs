@@ -12,12 +12,14 @@ use crate::session::turn_context::TurnContext;
 use crate::session_prefix::format_inter_agent_completion_message;
 use crate::thread_manager::thread_store_from_config;
 use crate::tools::context::ToolOutput;
+use crate::tools::handlers::multi_agents_spec::InterAgentMessageFormat;
 use crate::tools::handlers::multi_agents_v2::FollowupTaskHandler as FollowupTaskHandlerV2;
 use crate::tools::handlers::multi_agents_v2::InterruptAgentHandler;
 use crate::tools::handlers::multi_agents_v2::ListAgentsHandler as ListAgentsHandlerV2;
 use crate::tools::handlers::multi_agents_v2::SendMessageHandler as SendMessageHandlerV2;
 use crate::tools::handlers::multi_agents_v2::SpawnAgentHandler as SpawnAgentHandlerV2;
 use crate::tools::handlers::multi_agents_v2::WaitAgentHandler as WaitAgentHandlerV2;
+use crate::tools::handlers::multi_agents_v2::communication_from_tool_message;
 use crate::turn_diff_tracker::TurnDiffTracker;
 use codex_extension_api::empty_extension_registry;
 use codex_features::Feature;
@@ -69,6 +71,19 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
+
+#[test]
+fn multi_agent_v2_plaintext_message_format_keeps_content_portable() {
+    let communication = communication_from_tool_message(
+        AgentPath::root(),
+        AgentPath::try_from("/root/worker").expect("agent path"),
+        "portable message".to_string(),
+        InterAgentMessageFormat::Plaintext,
+    );
+
+    assert_eq!(communication.content, "portable message");
+    assert_eq!(communication.encrypted_content, None);
+}
 
 fn invocation(
     session: Arc<crate::session::session::Session>,
@@ -1163,7 +1178,7 @@ async fn multi_agent_v2_spawn_returns_path_and_send_message_accepts_relative_pat
             )
     }));
 
-    SendMessageHandlerV2
+    SendMessageHandlerV2::new(InterAgentMessageFormat::Encrypted)
         .handle(invocation(
             session.clone(),
             turn.clone(),
@@ -1359,7 +1374,7 @@ async fn multi_agent_v2_send_message_accepts_root_target_from_child() {
         agent_role: None,
     });
 
-    SendMessageHandlerV2
+    SendMessageHandlerV2::new(InterAgentMessageFormat::Encrypted)
         .handle(invocation(
             Arc::new(session),
             Arc::new(turn),
@@ -1435,7 +1450,7 @@ async fn multi_agent_v2_followup_task_rejects_root_target_from_child() {
         agent_role: None,
     });
 
-    let Err(err) = FollowupTaskHandlerV2
+    let Err(err) = FollowupTaskHandlerV2::new(InterAgentMessageFormat::Encrypted)
         .handle(invocation(
             Arc::new(session),
             Arc::new(turn),
@@ -1817,7 +1832,10 @@ async fn multi_agent_v2_send_message_rejects_legacy_items_field() {
         })),
     );
 
-    let Err(err) = SendMessageHandlerV2.handle(invocation).await else {
+    let Err(err) = SendMessageHandlerV2::new(InterAgentMessageFormat::Encrypted)
+        .handle(invocation)
+        .await
+    else {
         panic!("legacy items field should be rejected in v2");
     };
     let FunctionCallError::RespondToModel(message) = err else {
@@ -1872,7 +1890,10 @@ async fn multi_agent_v2_send_message_rejects_interrupt_parameter() {
         })),
     );
 
-    let Err(err) = SendMessageHandlerV2.handle(invocation).await else {
+    let Err(err) = SendMessageHandlerV2::new(InterAgentMessageFormat::Encrypted)
+        .handle(invocation)
+        .await
+    else {
         panic!("send_message interrupt parameter should be rejected");
     };
     let FunctionCallError::RespondToModel(message) = err else {
@@ -1960,7 +1981,7 @@ async fn multi_agent_v2_followup_task_completion_notifies_parent_on_every_turn()
         )
         .await;
 
-    FollowupTaskHandlerV2
+    FollowupTaskHandlerV2::new(InterAgentMessageFormat::Encrypted)
         .handle(invocation(
             session,
             turn,
@@ -2100,7 +2121,10 @@ async fn multi_agent_v2_followup_task_rejects_legacy_items_field() {
         })),
     );
 
-    let Err(err) = FollowupTaskHandlerV2.handle(invocation).await else {
+    let Err(err) = FollowupTaskHandlerV2::new(InterAgentMessageFormat::Encrypted)
+        .handle(invocation)
+        .await
+    else {
         panic!("legacy items field should be rejected in v2");
     };
     let FunctionCallError::RespondToModel(message) = err else {
