@@ -47,6 +47,7 @@ use crate::tools::router::ToolSuggestCandidates;
 use crate::tools::router::ToolSuggestPresentation;
 
 const MULTI_AGENT_V2_NAMESPACE: &str = "collaboration";
+const MULTI_AGENT_V2_PLAINTEXT_NAMESPACE: &str = "agents";
 
 #[derive(Default)]
 struct ToolPlanInputs {
@@ -1584,6 +1585,7 @@ async fn multi_agent_v2_message_schemas_are_encrypted() {
 }
 
 #[tokio::test]
+#[tokio::test]
 async fn multi_agent_v2_can_disable_wait_agent() {
     let plan = probe(|turn| {
         set_feature(turn, Feature::MultiAgentV2, /*enabled*/ true);
@@ -1605,6 +1607,46 @@ async fn multi_agent_v2_can_disable_wait_agent() {
     );
     plan.assert_visible_lacks(&["clock"]);
     plan.assert_registered_lacks(&["collaboration.wait_agent", "clock.sleep"]);
+}
+
+#[tokio::test]
+async fn multi_agent_v2_plaintext_messages_use_non_reserved_namespace() {
+    let plan = probe(|turn| {
+        set_feature(turn, Feature::MultiAgentV2, /*enabled*/ true);
+        update_config(turn, |config| {
+            config.multi_agent_v2.encrypt_inter_agent_messages = false;
+            config.multi_agent_v2.tool_namespace = None;
+        });
+    })
+    .await;
+
+    plan.assert_visible_contains(&[MULTI_AGENT_V2_PLAINTEXT_NAMESPACE]);
+    plan.assert_visible_lacks(&[MULTI_AGENT_V2_NAMESPACE]);
+    let ToolSpec::Namespace(namespace) = plan.visible_spec(MULTI_AGENT_V2_PLAINTEXT_NAMESPACE)
+    else {
+        panic!("expected {MULTI_AGENT_V2_PLAINTEXT_NAMESPACE} namespace");
+    };
+    for tool_name in ["spawn_agent", "send_message", "followup_task"] {
+        let Some(ResponsesApiNamespaceTool::Function(tool)) = namespace.tools.iter().find(|tool| {
+            matches!(
+                tool,
+                ResponsesApiNamespaceTool::Function(tool) if tool.name == tool_name
+            )
+        }) else {
+            panic!("expected {tool_name} in {MULTI_AGENT_V2_PLAINTEXT_NAMESPACE} namespace");
+        };
+        let properties = tool
+            .parameters
+            .properties
+            .as_ref()
+            .expect("tool should use object params");
+        assert_eq!(
+            properties
+                .get("message")
+                .and_then(|schema| schema.encrypted),
+            None
+        );
+    }
 }
 
 #[tokio::test]

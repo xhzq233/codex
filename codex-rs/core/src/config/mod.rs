@@ -251,6 +251,7 @@ You may also see them addressed as to=/root/..., which indicates your identity i
 "#;
 const DEFAULT_MULTI_AGENT_V2_MODEL_OVERRIDE_USAGE_HINT_TEXT: &str = "Full-history forks (`fork_turns` omitted or `\"all\"`) inherit the parent model and reasoning effort and do not accept overrides. Only set `model` or `reasoning_effort` when explicitly requested by the user, applicable `AGENTS.md` instructions, or skill instructions; when doing so, set `fork_turns` to `\"none\"` or a positive integer string.";
 const DEFAULT_MULTI_AGENT_V2_TOOL_NAMESPACE: &str = "collaboration";
+const DEFAULT_MULTI_AGENT_V2_PLAINTEXT_TOOL_NAMESPACE: &str = "agents";
 const DEFAULT_MULTI_AGENT_V2_SHARED_USAGE_HINT_TEXT: &str = r#"Note that collaboration tools cannot be called from inside `functions.exec`. Call `spawn_agent`, `send_message`, `followup_task`, `wait_agent`, `interrupt_agent`, and `list_agents` only as direct tool calls using the recipient shown in their tool definitions, such as `to=functions.collaboration.spawn_agent`, since they are intentionally absent from the `functions.exec` `tools.*` namespace. Available tools in `functions.exec` are explicitly described with a `tools` namespace in the developer message.
 
 All agents share the same directory. In detail:
@@ -1258,6 +1259,7 @@ pub struct MultiAgentV2Config {
     pub expose_spawn_agent_model_overrides: bool,
     pub wait_agent_enabled: bool,
     pub non_code_mode_only: bool,
+    pub encrypt_inter_agent_messages: bool,
 }
 
 impl MultiAgentV2Config {
@@ -1283,6 +1285,7 @@ impl MultiAgentV2Config {
             expose_spawn_agent_model_overrides: true,
             wait_agent_enabled: true,
             non_code_mode_only: true,
+            encrypt_inter_agent_messages: true,
         }
     }
 }
@@ -2734,13 +2737,20 @@ fn resolve_multi_agent_v2_config(config_toml: &ConfigToml) -> MultiAgentV2Config
         .and_then(|config| config.multi_agent_mode_hint_text.as_ref())
         .cloned()
         .or(default.multi_agent_mode_hint_text);
-    let tool_namespace = base
-        .and_then(|config| config.tool_namespace.as_ref())
-        .cloned()
-        .or(default.tool_namespace);
     let non_code_mode_only = base
         .and_then(|config| config.non_code_mode_only)
         .unwrap_or(default.non_code_mode_only);
+    let encrypt_inter_agent_messages = base
+        .and_then(|config| config.encrypt_inter_agent_messages)
+        .unwrap_or(default.encrypt_inter_agent_messages);
+    let tool_namespace = base
+        .and_then(|config| config.tool_namespace.as_ref())
+        .cloned()
+        .or_else(|| {
+            (!encrypt_inter_agent_messages)
+                .then(|| DEFAULT_MULTI_AGENT_V2_PLAINTEXT_TOOL_NAMESPACE.to_string())
+        })
+        .or(default.tool_namespace);
 
     MultiAgentV2Config {
         max_concurrent_threads_per_session,
@@ -2757,6 +2767,7 @@ fn resolve_multi_agent_v2_config(config_toml: &ConfigToml) -> MultiAgentV2Config
         expose_spawn_agent_model_overrides,
         wait_agent_enabled,
         non_code_mode_only,
+        encrypt_inter_agent_messages,
     }
 }
 

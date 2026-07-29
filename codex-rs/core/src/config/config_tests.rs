@@ -10792,6 +10792,7 @@ hide_spawn_agent_metadata = true
 expose_spawn_agent_model_overrides = false
 wait_agent_enabled = false
 non_code_mode_only = true
+encrypt_inter_agent_messages = false
 
 [agents]
 max_concurrent_threads_per_session = 9
@@ -10847,6 +10848,7 @@ max_concurrent_threads_per_session = 9
     assert!(!config.multi_agent_v2.expose_spawn_agent_model_overrides);
     assert!(!config.multi_agent_v2.wait_agent_enabled);
     assert!(config.multi_agent_v2.non_code_mode_only);
+    assert!(!config.multi_agent_v2.encrypt_inter_agent_messages);
 
     Ok(())
 }
@@ -10871,6 +10873,7 @@ enabled = true
         config.multi_agent_v2,
         resolve_multi_agent_v2_config(&ConfigToml::default())
     );
+    assert!(config.multi_agent_v2.encrypt_inter_agent_messages);
     assert_eq!(
         (
             config.agent_max_threads,
@@ -10878,6 +10881,32 @@ enabled = true
         ),
         (None, Some(3))
     );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn multi_agent_v2_plaintext_defaults_to_non_reserved_tool_namespace() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    std::fs::write(
+        codex_home.path().join(CONFIG_TOML_FILE),
+        r#"[features.multi_agent_v2]
+enabled = true
+encrypt_inter_agent_messages = false
+"#,
+    )?;
+
+    let config = ConfigBuilder::without_managed_config_for_tests()
+        .codex_home(codex_home.path().to_path_buf())
+        .fallback_cwd(Some(codex_home.path().to_path_buf()))
+        .build()
+        .await?;
+
+    assert_eq!(
+        config.multi_agent_v2.tool_namespace.as_deref(),
+        Some("agents")
+    );
+    assert!(!config.multi_agent_v2.encrypt_inter_agent_messages);
 
     Ok(())
 }

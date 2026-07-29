@@ -1821,6 +1821,10 @@
         "enabled": {
           "type": "boolean"
         },
+        "encrypt_inter_agent_messages": {
+          "description": "Encrypt inter-agent message fields using the OpenAI Responses extension. Disable this for providers that only implement the portable Responses schema. When disabled without an explicit tool namespace, the client uses `agents`.",
+          "type": "boolean"
+        },
         "expose_spawn_agent_model_overrides": {
           "description": "Exposes `model` and `reasoning_effort` on the multi-agent v2 spawn tool and adds corresponding guidance to root and subagent usage hints.",
           "type": "boolean"

@@ -2,9 +2,6 @@
 
 use crate::agent::AgentStatus;
 use crate::agent::agent_resolver::resolve_agent_target;
-use crate::context::ContextualUserFragment;
-use crate::context::InterAgentMessage;
-use crate::context::InterAgentMessageType;
 use crate::function_tool::FunctionCallError;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
@@ -58,27 +55,21 @@ fn communication_from_tool_message(
     author: AgentPath,
     recipient: AgentPath,
     message: String,
-    source: &crate::tools::context::ToolCallSource,
+    message_format: crate::tools::handlers::multi_agents_spec::InterAgentMessageFormat,
     trigger_turn: bool,
 ) -> InterAgentCommunication {
-    if !matches!(
-        source,
-        crate::tools::context::ToolCallSource::DirectPlaintextMessage
-    ) {
-        return InterAgentCommunication::new_encrypted(
-            author,
-            recipient,
-            Vec::new(),
-            message,
-            trigger_turn,
-        );
+    match message_format {
+        crate::tools::handlers::multi_agents_spec::InterAgentMessageFormat::Encrypted => {
+            InterAgentCommunication::new_encrypted(
+                author,
+                recipient,
+                Vec::new(),
+                message,
+                trigger_turn,
+            )
+        }
+        crate::tools::handlers::multi_agents_spec::InterAgentMessageFormat::Plaintext => {
+            InterAgentCommunication::new(author, recipient, Vec::new(), message, trigger_turn)
+        }
     }
-    let message_type = if trigger_turn {
-        InterAgentMessageType::NewTask
-    } else {
-        InterAgentMessageType::Message
-    };
-    let content =
-        InterAgentMessage::new(message_type, recipient.clone(), author.clone(), message).render();
-    InterAgentCommunication::new(author, recipient, Vec::new(), content, trigger_turn)
 }

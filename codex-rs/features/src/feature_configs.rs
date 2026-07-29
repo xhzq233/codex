@@ -114,6 +114,11 @@ pub struct MultiAgentV2ConfigToml {
     pub wait_agent_enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub non_code_mode_only: Option<bool>,
+    /// Encrypt inter-agent message fields using the OpenAI Responses extension.
+    /// Disable this for providers that only implement the portable Responses schema. When
+    /// disabled without an explicit tool namespace, the client uses `agents`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encrypt_inter_agent_messages: Option<bool>,
 }
 
 impl FeatureConfig for MultiAgentV2ConfigToml {
