@@ -194,6 +194,182 @@ impl LocalStdioServerLauncher {
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
+const BROWSER_NODE_REPL_BROKER: &str = r###"
+import { spawn } from "node:child_process";
+import { unlink } from "node:fs/promises";
+import net from "node:net";
+
+const nodeReplPath = __NODE_REPL_PATH__;
+const socketPath = "/tmp/codex-browser-broker-" + process.pid + ".sock";
+try { await unlink(socketPath); } catch {}
+const env = { ...process.env };
+const broker = spawn(nodeReplPath, ["--disable-sandbox"], {
+  env,
+  stdio: ["pipe", "pipe", "inherit"],
+});
+broker.on("error", error => {
+  process.stderr.write("broker spawn failed: " + (error.stack || error) + "\n");
+  process.exitCode = 1;
+});
+
+const bootstrapCode = [
+  'var cp = await import("node:child_process");',
+  'var net = await import("node:net");',
+  'var fs = await import("node:fs/promises");',
+  "var browserSocketPath = " + JSON.stringify(socketPath) + ";",
+  'try { await fs.unlink(browserSocketPath); } catch {}',
+  'var browserChild = cp.spawn(' + JSON.stringify(nodeReplPath) + ', ["--disable-sandbox"], {env: ' + JSON.stringify(env) + ', stdio: ["pipe", "pipe", "pipe"]});',
+  'browserChild.stderr.on("data", d => console.error(d.toString()));',
+  'var brokerServer = net.createServer(client => {',
+  '  if (globalThis.brokerClient) { client.destroy(); return; }',
+  '  globalThis.brokerClient = client;',
+  '  client.pipe(browserChild.stdin);',
+  '  browserChild.stdout.pipe(client);',
+  '  client.on("close", () => { try { browserChild.kill("SIGTERM"); } catch {} });',
+  '});',
+  'await new Promise((resolve, reject) => { brokerServer.once("error", reject); brokerServer.listen(browserSocketPath, () => resolve()); });',
+  'nodeRepl.write(JSON.stringify({ready: true, path: browserSocketPath}));',
+].join(" ");
+const send = value => broker.stdin.write(JSON.stringify(value) + "\n");
+send({
+  jsonrpc: "2.0",
+  id: 0,
+  method: "initialize",
+  params: {
+    protocolVersion: "2024-11-05",
+    capabilities: {},
+    clientInfo: { name: "codex-signed-node-repl-broker", version: "1.0" },
+  },
+});
+send({ jsonrpc: "2.0", method: "notifications/initialized" });
+send({
+  jsonrpc: "2.0",
+  id: 1,
+  method: "tools/call",
+  params: {
+    name: "js",
+    arguments: { title: "start signed browser child", code: bootstrapCode },
+  },
+});
+
+let bootstrapBuffer = "";
+let connected = false;
+broker.stdout.on("data", chunk => {
+  bootstrapBuffer += chunk.toString();
+  while (true) {
+    const newline = bootstrapBuffer.indexOf("\n");
+    if (newline < 0) break;
+    const line = bootstrapBuffer.slice(0, newline);
+    bootstrapBuffer = bootstrapBuffer.slice(newline + 1);
+    let message;
+    try { message = JSON.parse(line); } catch { continue; }
+    const text = message?.result?.content?.find?.(item => item.type === "text")?.text;
+    if (!connected && message?.id === 1) {
+      if (message.error || message.result?.isError) {
+        process.stderr.write("browser broker bootstrap failed: " + (text || JSON.stringify(message)) + "\n");
+        process.exit(1);
+      }
+      let ready;
+      try { ready = JSON.parse(text); } catch {}
+      if (ready?.ready && ready.path === socketPath) {
+        connected = true;
+        const socket = net.createConnection(socketPath, () => {
+          process.stdin.pipe(socket);
+          socket.pipe(process.stdout);
+          process.stdin.resume();
+        });
+        socket.on("error", error => {
+          process.stderr.write("browser broker socket failed: " + (error.stack || error) + "\n");
+          process.exitCode = 1;
+        });
+        socket.on("close", async () => {
+          try { broker.kill("SIGTERM"); } catch {}
+          try { await unlink(socketPath); } catch {}
+          process.exit();
+        });
+      }
+    }
+  }
+});
+process.on("SIGTERM", () => { try { broker.kill("SIGTERM"); } catch {} });
+process.on("SIGINT", () => { try { broker.kill("SIGINT"); } catch {} });
+"###;
+
+#[cfg(any(target_os = "macos", test))]
+fn is_chatgpt_browser_node_repl(path: &Path) -> bool {
+    let Some(bin_dir) = path.parent() else {
+        return false;
+    };
+    let Some(cua_node_dir) = bin_dir.parent() else {
+        return false;
+    };
+    let Some(resources_dir) = cua_node_dir.parent() else {
+        return false;
+    };
+    let Some(contents_dir) = resources_dir.parent() else {
+        return false;
+    };
+    let Some(app_dir) = contents_dir.parent() else {
+        return false;
+    };
+
+    path.file_name().and_then(|name| name.to_str()) == Some("node_repl")
+        && bin_dir.file_name().and_then(|name| name.to_str()) == Some("bin")
+        && cua_node_dir.file_name().and_then(|name| name.to_str()) == Some("cua_node")
+        && resources_dir.file_name().and_then(|name| name.to_str()) == Some("Resources")
+        && contents_dir.file_name().and_then(|name| name.to_str()) == Some("Contents")
+        && app_dir.extension().and_then(|extension| extension.to_str()) == Some("app")
+        && app_dir.parent() == Some(Path::new("/Applications"))
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn browser_node_repl_broker_script(node_repl_path: &Path) -> String {
+    let serialized_path =
+        serde_json::Value::String(node_repl_path.to_string_lossy().into_owned()).to_string();
+    BROWSER_NODE_REPL_BROKER.replace("__NODE_REPL_PATH__", &serialized_path)
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn browser_node_repl_broker_command(
+    resolved_program: &Path,
+    is_file: impl FnOnce(&Path) -> bool,
+) -> Option<(PathBuf, Vec<OsString>)> {
+    if !is_chatgpt_browser_node_repl(resolved_program) {
+        return None;
+    }
+    let bin_dir = resolved_program.parent()?;
+    let node_path = bin_dir.join("node");
+    if !is_file(&node_path) {
+        return None;
+    }
+    let broker_script = browser_node_repl_broker_script(resolved_program);
+    Some((
+        node_path,
+        vec![
+            OsString::from("--input-type=module"),
+            OsString::from("-e"),
+            OsString::from(broker_script),
+        ],
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn maybe_wrap_browser_node_repl(
+    resolved_program: PathBuf,
+    args: Vec<OsString>,
+) -> (PathBuf, Vec<OsString>) {
+    browser_node_repl_broker_command(&resolved_program, Path::is_file)
+        .unwrap_or((resolved_program, args))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn maybe_wrap_browser_node_repl(
+    resolved_program: PathBuf,
+    args: Vec<OsString>,
+) -> (PathBuf, Vec<OsString>) {
+    (resolved_program, args)
+}
 impl StdioServerLauncher for LocalStdioServerLauncher {
     fn launch(
         &self,
@@ -269,6 +445,7 @@ impl LocalStdioServerLauncher {
         let cwd = cwd.map(PathBuf::from).unwrap_or(fallback_cwd);
         let resolved_program =
             program_resolver::resolve(program, &envs, &cwd).map_err(io::Error::other)?;
+        let (resolved_program, args) = maybe_wrap_browser_node_repl(resolved_program.into(), args);
 
         let mut command = Command::new(resolved_program);
         command
@@ -630,6 +807,57 @@ mod tests {
     use codex_protocol::config_types::EnvironmentVariablePattern;
     use codex_protocol::config_types::ShellEnvironmentPolicy;
     use codex_protocol::shell_environment;
+
+    #[test]
+    fn browser_node_repl_broker_requires_chatgpt_cua_node_layout() {
+        assert_eq!(
+            [
+                is_chatgpt_browser_node_repl(Path::new(
+                    "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node_repl",
+                )),
+                is_chatgpt_browser_node_repl(Path::new(
+                    "/Applications/ChatGPT Canary.app/Contents/Resources/cua_node/bin/node_repl",
+                )),
+                is_chatgpt_browser_node_repl(Path::new(
+                    "/tmp/ChatGPT.app/Contents/Resources/cua_node/bin/node_repl",
+                )),
+                is_chatgpt_browser_node_repl(Path::new("/tmp/node_repl")),
+                is_chatgpt_browser_node_repl(Path::new("/tmp/other/bin/node_repl")),
+            ],
+            [true, true, false, false, false]
+        );
+    }
+
+    #[test]
+    fn browser_node_repl_broker_requires_signed_node_sibling() {
+        let node_repl_path =
+            Path::new("/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node_repl");
+        assert_eq!(
+            [
+                browser_node_repl_broker_command(node_repl_path, |_| false).is_some(),
+                browser_node_repl_broker_command(node_repl_path, |_| true).is_some(),
+            ],
+            [false, true]
+        );
+    }
+
+    #[test]
+    fn browser_node_repl_broker_serializes_quoted_path_once() {
+        let script = browser_node_repl_broker_script(Path::new(
+            "/Applications/ChatGPT \"Canary\".app/Contents/Resources/cua_node/bin/node_repl",
+        ));
+
+        assert_eq!(
+            (
+                script.contains("__NODE_REPL_PATH__"),
+                script.contains(
+                    r#"const nodeReplPath = "/Applications/ChatGPT \"Canary\".app/Contents/Resources/cua_node/bin/node_repl";"#,
+                ),
+                script.contains("const nodeReplPath = \"\""),
+            ),
+            (false, true, false)
+        );
+    }
 
     #[test]
     fn remote_env_policy_uses_core_env_without_remote_source_vars() {

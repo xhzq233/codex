@@ -80,14 +80,28 @@ fn body_contains(req: &wiremock::Request, text: &str) -> bool {
         .is_some_and(|body| body.contains(text))
 }
 
-fn request_has_input_type(req: &wiremock::Request, ty: &str) -> bool {
+fn message_item_has_input_text(item: &Value, text: &str) -> bool {
+    item.get("type").and_then(Value::as_str) == Some("message")
+        && item.get("role").and_then(Value::as_str) == Some("user")
+        && item
+            .get("content")
+            .and_then(Value::as_array)
+            .is_some_and(|content| {
+                content.iter().any(|part| {
+                    part.get("type").and_then(Value::as_str) == Some("input_text")
+                        && part.get("text").and_then(Value::as_str) == Some(text)
+                })
+            })
+}
+
+fn request_has_message_text(req: &wiremock::Request, text: &str) -> bool {
     decoded_body(req)
         .and_then(|body| serde_json::from_slice::<Value>(&body).ok())
         .and_then(|body| body.get("input").and_then(Value::as_array).cloned())
         .is_some_and(|items| {
             items
                 .iter()
-                .any(|item| item.get("type").and_then(Value::as_str) == Some(ty))
+                .any(|item| message_item_has_input_text(item, text))
         })
 }
 
@@ -1400,10 +1414,12 @@ async fn spawned_multi_agent_v2_child_inherits_parent_developer_context() -> Res
     Ok(())
 }
 
-#[test_case(false; "encrypted")]
-#[test_case(true; "plaintext")]
+#[test_case(false; "encrypted_tool_args")]
+#[test_case(true; "plaintext_tool_args")]
 #[tokio::test]
-async fn multi_agent_v2_spawn_sends_agent_message_to_child(plaintext: bool) -> Result<()> {
+async fn multi_agent_v2_spawn_forces_plaintext_user_message_to_child(
+    plaintext_tool_args: bool,
+) -> Result<()> {
     let output: &'static Mutex<Vec<u8>> = Box::leak(Box::new(Mutex::new(Vec::new())));
     let subscriber = tracing_subscriber::fmt()
         .with_ansi(false)
@@ -1413,7 +1429,7 @@ async fn multi_agent_v2_spawn_sends_agent_message_to_child(plaintext: bool) -> R
     let _guard = tracing::subscriber::set_default(subscriber);
 
     let server = start_mock_server().await;
-    let message = if plaintext {
+    let message = if plaintext_tool_args {
         "plaintext delegated task"
     } else {
         "opaque-encrypted-message"
@@ -1428,7 +1444,7 @@ async fn multi_agent_v2_spawn_sends_agent_message_to_child(plaintext: bool) -> R
         "spawn_agent",
         &spawn_args,
     );
-    if plaintext {
+    if plaintext_tool_args {
         spawn_event["item"]["encrypted_function_args"] = json!([]);
     }
     mount_sse_once_match(
@@ -1441,19 +1457,25 @@ async fn multi_agent_v2_spawn_sends_agent_message_to_child(plaintext: bool) -> R
         ]),
     )
     .await;
+    let notification = format!(
+        "Message Type: NEW_TASK\nTask name: /root/worker\nSender: /root\nPayload:\n{message}"
+    );
+    let child_notification = notification.clone();
     let child_request_log = mount_sse_once_match(
         &server,
-        |req: &wiremock::Request| request_has_input_type(req, "agent_message"),
+        move |req: &wiremock::Request| request_has_message_text(req, &child_notification),
         sse(vec![
             ev_response_created("resp-child-1"),
             ev_completed("resp-child-1"),
         ]),
     )
     .await;
+    let parent_notification = notification.clone();
     let parent_request_log = mount_sse_once_match(
         &server,
-        |req: &wiremock::Request| {
-            body_contains(req, SPAWN_CALL_ID) && !request_has_input_type(req, "agent_message")
+        move |req: &wiremock::Request| {
+            body_contains(req, SPAWN_CALL_ID)
+                && !request_has_message_text(req, &parent_notification)
         },
         sse(vec![
             ev_response_created("resp-parent-2"),
@@ -1482,49 +1504,38 @@ async fn multi_agent_v2_spawn_sends_agent_message_to_child(plaintext: bool) -> R
     // the child request instead of assuming the latest recorded request is already it.
     let deadline = Instant::now() + Duration::from_secs(2);
     let child_request = loop {
-        if let Some(request) = child_request_log
-            .requests()
-            .into_iter()
-            .find(|request| !request.inputs_of_type("agent_message").is_empty())
-        {
+        if let Some(request) = child_request_log.requests().into_iter().find(|request| {
+            request
+                .inputs_of_type("message")
+                .iter()
+                .any(|item| message_item_has_input_text(item, &notification))
+        }) {
             break request;
         }
         if Instant::now() >= deadline {
-            anyhow::bail!("timed out waiting for child agent message request");
+            anyhow::bail!("timed out waiting for child plaintext message request");
         }
         sleep(Duration::from_millis(10)).await;
     };
-    let content = if plaintext {
-        vec![json!({
-            "type": "input_text",
-            "text": format!(
-                "Message Type: NEW_TASK\nTask name: /root/worker\nSender: /root\nPayload:\n{message}"
-            ),
-        })]
-    } else {
-        vec![
-            json!({
-                "type": "input_text",
-                "text": "Message Type: NEW_TASK\nTask name: /root/worker\nSender: /root\nPayload:\n",
-            }),
-            json!({
-                "type": "encrypted_content",
-                "encrypted_content": message,
-            }),
-        ]
-    };
+    let delegated_messages = child_request
+        .inputs_of_type("message")
+        .into_iter()
+        .filter(|item| message_item_has_input_text(item, &notification))
+        .collect();
     assert_eq!(
         strip_response_item_ids_from_json(strip_metadata_from_json(Value::Array(
-            child_request.inputs_of_type("agent_message"),
+            delegated_messages,
         ))),
         Value::Array(vec![json!({
-            "type": "agent_message",
-            "author": "/root",
-            "recipient": "/root/worker",
-            "content": content,
+            "type": "message",
+            "role": "user",
+            "content": [{
+                "type": "input_text",
+                "text": notification,
+            }],
         })])
     );
-    if plaintext {
+    if plaintext_tool_args {
         assert!(
             parent_request_log.requests().into_iter().any(|request| {
                 request.input().iter().any(|item| {
@@ -1561,8 +1572,7 @@ async fn multi_agent_v2_spawn_sends_agent_message_to_child(plaintext: bool) -> R
         .expect("spawn send event");
     assert!(send.contains(&format!("sender_thread_id={root_thread_id}")));
     assert!(send.contains(&format!("receiver_thread_id={child_thread_id}")));
-    let logged_message = if plaintext { "[plaintext]" } else { message };
-    assert!(send.contains(&format!("content=\"{logged_message}\"")));
+    assert!(send.contains("content=\"[plaintext]\""));
 
     let communication_id = log_field(send, "communication_id").expect("communication ID");
     logs.lines()
@@ -1584,7 +1594,7 @@ enum CompletionScenario {
 #[test_case(CompletionScenario::Completed ; "completed")]
 #[test_case(CompletionScenario::TerminalError ; "terminal_error")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn plaintext_multi_agent_v2_completion_sends_agent_message(
+async fn plaintext_multi_agent_v2_completion_sends_user_message(
     scenario: CompletionScenario,
 ) -> Result<()> {
     let server = start_mock_server().await;
@@ -1617,7 +1627,10 @@ async fn plaintext_multi_agent_v2_completion_sends_agent_message(
     };
     let child_request = mount_response_once_match(
         &server,
-        |req: &wiremock::Request| request_has_input_type(req, "agent_message"),
+        |req: &wiremock::Request| {
+            body_contains(req, "Message Type: NEW_TASK")
+                && body_contains(req, "opaque-encrypted-message")
+        },
         sse_response(sse(child_events)).set_delay(Duration::from_secs(1)),
     )
     .await;
@@ -1705,15 +1718,17 @@ async fn plaintext_multi_agent_v2_completion_sends_agent_message(
     let request = wait_for_requests(&agent_request)
         .await?
         .pop()
-        .expect("agent message request");
+        .expect("plaintext message request");
+    let notifications = request
+        .inputs_of_type("message")
+        .into_iter()
+        .filter(|item| message_item_has_input_text(item, &notification))
+        .collect();
     assert_eq!(
-        strip_response_item_ids_from_json(strip_metadata_from_json(Value::Array(
-            request.inputs_of_type("agent_message"),
-        ))),
+        strip_response_item_ids_from_json(strip_metadata_from_json(Value::Array(notifications,))),
         Value::Array(vec![json!({
-            "type": "agent_message",
-            "author": "/root/worker",
-            "recipient": "/root",
+            "type": "message",
+            "role": "user",
             "content": [{
                 "type": "input_text",
                 "text": notification,

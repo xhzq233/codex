@@ -436,7 +436,7 @@ fn fork_turn_positions_use_inter_agent_delivery_metadata() {
 }
 
 #[test]
-fn fork_turn_positions_use_canonical_agent_messages_and_delivery_metadata() {
+fn fork_turn_positions_use_plaintext_messages_and_delivery_metadata() {
     let queued = InterAgentCommunication::new(
         AgentPath::root(),
         AgentPath::try_from("/root/worker").expect("agent path"),

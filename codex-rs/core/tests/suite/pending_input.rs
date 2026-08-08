@@ -344,12 +344,13 @@ async fn queue_only_agent_mail_wakes_sleeping_root_and_persists_message() {
     assert!(history.items.iter().any(|item| {
         matches!(
             item,
-            RolloutItem::ResponseItem(codex_protocol::models::ResponseItem::AgentMessage {
+            RolloutItem::ResponseItem(codex_protocol::models::ResponseItem::Message {
+                role,
                 content,
                 ..
-            }) if content.iter().any(|content| matches!(
+            }) if role == "user" && content.iter().any(|content| matches!(
                 content,
-                codex_protocol::models::AgentMessageInputContent::InputText { text }
+                codex_protocol::models::ContentItem::InputText { text }
                     if text == CHILD_MESSAGE
             ))
         )
@@ -808,11 +809,9 @@ async fn queued_inter_agent_mail_does_not_restart_after_final_answer() {
     assert_eq!(requests.len(), 1);
     let request: Value = from_slice(&requests[0]).expect("parse request");
     assert!(
-        request["input"]
-            .as_array()
-            .expect("request input")
+        message_input_texts(&request, "user")
             .iter()
-            .all(|item| item.get("type").and_then(Value::as_str) != Some("agent_message"))
+            .all(|text| text != "queued child update")
     );
 
     submit_user_input(&codex, "second prompt").await;
@@ -821,14 +820,12 @@ async fn queued_inter_agent_mail_does_not_restart_after_final_answer() {
     requests = server.requests().await;
     assert_eq!(requests.len(), 2);
     let request: Value = from_slice(&requests[1]).expect("parse request");
-    let input = request["input"].as_array().expect("request input");
-    let agent_message = input
-        .iter()
-        .find(|item| item.get("type").and_then(Value::as_str) == Some("agent_message"))
-        .expect("queued child update should be included in the next turn");
     assert_eq!(
-        agent_message["content"],
-        json!([{"type": "input_text", "text": "queued child update"}])
+        message_input_texts(&request, "user")
+            .into_iter()
+            .filter(|text| text == "queued child update")
+            .collect::<Vec<_>>(),
+        vec!["queued child update"]
     );
     let user_input = message_input_texts(&request, "user")
         .into_iter()

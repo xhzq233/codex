@@ -81,17 +81,6 @@ fn request_has_model(request: &wiremock::Request, model: &str) -> bool {
         .is_some_and(|body| body.get("model").and_then(Value::as_str) == Some(model))
 }
 
-fn request_has_input_type(request: &wiremock::Request, input_type: &str) -> bool {
-    decoded_body(request)
-        .and_then(|body| serde_json::from_slice::<Value>(&body).ok())
-        .and_then(|body| body.get("input").and_then(Value::as_array).cloned())
-        .is_some_and(|items| {
-            items
-                .iter()
-                .any(|item| item.get("type").and_then(Value::as_str) == Some(input_type))
-        })
-}
-
 async fn mount_root_collaboration_call(
     server: &wiremock::MockServer,
     prompt: &'static str,
@@ -190,7 +179,6 @@ async fn cold_root_resume_restores_agent_identity_and_role_on_followup() -> Resu
         &server,
         |request: &wiremock::Request| {
             request_has_model(request, ROLE_MODEL)
-                && request_has_input_type(request, "agent_message")
                 && body_contains(request, INITIAL_TASK)
         },
         sse(vec![
@@ -208,9 +196,7 @@ async fn cold_root_resume_restores_agent_identity_and_role_on_followup() -> Resu
     let nested_mock = mount_sse_once_match(
         &server,
         |request: &wiremock::Request| {
-            body_contains(request, NESTED_TASK)
-                && request_has_input_type(request, "agent_message")
-                && !body_contains(request, NESTED_CALL_ID)
+            body_contains(request, NESTED_TASK) && !body_contains(request, NESTED_CALL_ID)
         },
         sse(vec![ev_completed("resp-parent-turn-assistant")]),
     )
@@ -220,7 +206,7 @@ async fn cold_root_resume_restores_agent_identity_and_role_on_followup() -> Resu
             &server,
             move |request: &wiremock::Request| {
                 body_contains(request, text)
-                    && request_has_input_type(request, "agent_message") == is_subagent
+                    && request_has_model(request, ROLE_MODEL) == is_subagent
             },
             sse(vec![ev_completed("resp-parent-turn-assistant")]),
         )
@@ -346,9 +332,7 @@ async fn cold_root_resume_restores_agent_identity_and_role_on_followup() -> Resu
     mount_sse_once_match(
         &server,
         |request: &wiremock::Request| {
-            request_has_model(request, ROLE_MODEL)
-                && request_has_input_type(request, "agent_message")
-                && body_contains(request, SIBLING_TASK)
+            request_has_model(request, ROLE_MODEL) && body_contains(request, SIBLING_TASK)
         },
         sse(vec![
             ev_response_created("resp-survivor-1"),
@@ -404,7 +388,6 @@ async fn cold_root_resume_restores_agent_identity_and_role_on_followup() -> Resu
         &server,
         |request: &wiremock::Request| {
             request_has_model(request, ROLE_MODEL)
-                && request_has_input_type(request, "agent_message")
                 && body_contains(request, FOLLOWUP_TASK)
                 && body_contains(request, QUEUED_MESSAGE)
         },
@@ -602,9 +585,7 @@ async fn cold_root_resume_restores_agent_identity_and_role_on_followup() -> Resu
     let sibling_followup_request = mount_sse_once_match(
         &server,
         |request: &wiremock::Request| {
-            request_has_model(request, ROLE_MODEL)
-                && request_has_input_type(request, "agent_message")
-                && body_contains(request, SIBLING_FOLLOWUP_TASK)
+            request_has_model(request, ROLE_MODEL) && body_contains(request, SIBLING_FOLLOWUP_TASK)
         },
         sse(vec![
             ev_response_created("resp-survivor-2"),

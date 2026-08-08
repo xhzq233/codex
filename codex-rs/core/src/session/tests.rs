@@ -2259,9 +2259,9 @@ async fn record_inter_agent_communication_preserves_item_id_in_rollout_and_resum
     };
     let live_item_id = live_item
         .id()
-        .expect("live agent message should have an item id")
+        .expect("live plaintext message should have an item id")
         .to_string();
-    assert!(live_item_id.starts_with("amsg_"));
+    assert!(live_item_id.starts_with("msg_"));
 
     session.flush_rollout().await.expect("rollout should flush");
     let InitialHistory::Resumed(resumed) = RolloutRecorder::get_rollout_history(&rollout_path)
@@ -2271,7 +2271,7 @@ async fn record_inter_agent_communication_preserves_item_id_in_rollout_and_resum
         panic!("expected resumed rollout history");
     };
     let persisted_item_id = resumed.history.iter().find_map(|item| match item {
-        RolloutItem::ResponseItem(item @ ResponseItem::AgentMessage { .. }) => item.id(),
+        RolloutItem::ResponseItem(item @ ResponseItem::Message { .. }) => item.id(),
         _ => None,
     });
     assert_eq!(

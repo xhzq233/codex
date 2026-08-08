@@ -208,7 +208,10 @@ async fn subagent_usage_draws_from_the_shared_budget() -> Result<()> {
     .await;
     mount_sse_once_match(
         &server,
-        |request: &wiremock::Request| wire_request_contains(request, "\"type\":\"agent_message\""),
+        |request: &wiremock::Request| {
+            wire_request_contains(request, "Message Type: NEW_TASK")
+                && wire_request_contains(request, CHILD_PROMPT)
+        },
         sse(vec![
             ev_response_created("child-1"),
             ev_completed_with_tokens("child-1", /*total_tokens*/ 30),
@@ -219,7 +222,7 @@ async fn subagent_usage_draws_from_the_shared_budget() -> Result<()> {
         &server,
         |request: &wiremock::Request| {
             wire_request_contains(request, SPAWN_CALL_ID)
-                && !wire_request_contains(request, "\"type\":\"agent_message\"")
+                && !wire_request_contains(request, "Message Type: NEW_TASK")
         },
         sse(vec![
             ev_response_created("root-2"),

@@ -815,14 +815,17 @@ impl InterAgentCommunication {
     }
 
     pub fn to_model_input_item(&self) -> ResponseItem {
-        let content = match &self.encrypted_content {
-            Some(encrypted_content) => {
-                let message_type = if self.trigger_turn {
-                    "NEW_TASK"
-                } else {
-                    "MESSAGE"
-                };
-                vec![
+        if let Some(encrypted_content) = &self.encrypted_content {
+            let message_type = if self.trigger_turn {
+                "NEW_TASK"
+            } else {
+                "MESSAGE"
+            };
+            return ResponseItem::AgentMessage {
+                id: self.id.clone(),
+                author: self.author.to_string(),
+                recipient: self.recipient.to_string(),
+                content: vec![
                     AgentMessageInputContent::InputText {
                         text: format!(
                             "Message Type: {message_type}\nTask name: {}\nSender: {}\nPayload:\n",
@@ -832,17 +835,20 @@ impl InterAgentCommunication {
                     AgentMessageInputContent::EncryptedContent {
                         encrypted_content: encrypted_content.clone(),
                     },
-                ]
-            }
-            None => vec![AgentMessageInputContent::InputText {
+                ],
+                internal_chat_message_metadata_passthrough: self
+                    .internal_chat_message_metadata_passthrough
+                    .clone(),
+            };
+        }
+
+        ResponseItem::Message {
+            id: self.id.clone(),
+            role: "user".to_string(),
+            content: vec![ContentItem::InputText {
                 text: self.content.clone(),
             }],
-        };
-        ResponseItem::AgentMessage {
-            id: self.id.clone(),
-            author: self.author.to_string(),
-            recipient: self.recipient.to_string(),
-            content,
+            phase: None,
             internal_chat_message_metadata_passthrough: self
                 .internal_chat_message_metadata_passthrough
                 .clone(),
@@ -4673,6 +4679,31 @@ mod tests {
                         encrypted_content: "encrypted payload".to_string(),
                     },
                 ],
+                internal_chat_message_metadata_passthrough: None,
+            }
+        );
+    }
+
+    #[test]
+    fn queued_plaintext_inter_agent_communication_renders_user_message() {
+        let content =
+            "Message Type: NEW_TASK\nTask name: /root/worker\nSender: /root\nPayload:\ninspect"
+                .to_string();
+        let communication = InterAgentCommunication::new(
+            AgentPath::root(),
+            AgentPath::root().join("worker").expect("recipient path"),
+            Vec::new(),
+            content.clone(),
+            /*trigger_turn*/ true,
+        );
+
+        assert_eq!(
+            communication.to_model_input_item(),
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText { text: content }],
+                phase: None,
                 internal_chat_message_metadata_passthrough: None,
             }
         );

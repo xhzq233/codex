@@ -1027,9 +1027,12 @@ async fn remote_compact_v2_reuses_compaction_trigger_for_followups() -> Result<(
     );
     assert!(
         compact_request
-            .inputs_of_type("agent_message")
+            .inputs_of_type("message")
             .iter()
-            .any(|item| item.to_string().contains("child completion")),
+            .any(|item| {
+                item["role"].as_str() == Some("user")
+                    && item.to_string().contains("child completion")
+            }),
         "expected v2 compaction input to include the child completion"
     );
     assert!(

@@ -58,21 +58,11 @@ fn communication_from_tool_message(
     author: AgentPath,
     recipient: AgentPath,
     message: String,
-    source: &crate::tools::context::ToolCallSource,
+    _source: &crate::tools::context::ToolCallSource,
     trigger_turn: bool,
 ) -> InterAgentCommunication {
-    if !matches!(
-        source,
-        crate::tools::context::ToolCallSource::DirectPlaintextMessage
-    ) {
-        return InterAgentCommunication::new_encrypted(
-            author,
-            recipient,
-            Vec::new(),
-            message,
-            trigger_turn,
-        );
-    }
+    // Relay providers cannot consume the encrypted Responses extension. Keep collaboration
+    // messages portable regardless of which tool surface invoked the handler.
     let message_type = if trigger_turn {
         InterAgentMessageType::NewTask
     } else {
