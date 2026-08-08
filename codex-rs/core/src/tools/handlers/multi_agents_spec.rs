@@ -193,10 +193,7 @@ pub fn create_send_message_tool() -> ToolSpec {
         ),
         (
             "message".to_string(),
-            JsonSchema::string(Some(
-                "Message text to queue on the target agent.".to_string(),
-            ))
-            .with_encrypted(),
+            plaintext_inter_agent_message_schema("Message text to queue on the target agent."),
         ),
     ]);
 
@@ -226,10 +223,7 @@ pub fn create_followup_task_tool() -> ToolSpec {
         ),
         (
             "message".to_string(),
-            JsonSchema::string(Some(
-                "Message text to send to the target agent.".to_string(),
-            ))
-            .with_encrypted(),
+            plaintext_inter_agent_message_schema("Message text to send to the target agent."),
         ),
     ]);
 
@@ -628,14 +622,16 @@ fn spawn_agent_common_properties_v1(agent_type_description: &str) -> BTreeMap<St
     ])
 }
 
+fn plaintext_inter_agent_message_schema(description: &str) -> JsonSchema {
+    // Relay providers cannot round-trip the encrypted Responses extension.
+    JsonSchema::string(Some(description.to_string()))
+}
+
 fn spawn_agent_common_properties_v2(agent_type_description: &str) -> BTreeMap<String, JsonSchema> {
     BTreeMap::from([
         (
             "message".to_string(),
-            JsonSchema::string(Some(
-                "Initial plain-text task for the new agent.".to_string(),
-            ))
-            .with_encrypted(),
+            plaintext_inter_agent_message_schema("Initial plain-text task for the new agent."),
         ),
         (
             "agent_type".to_string(),
