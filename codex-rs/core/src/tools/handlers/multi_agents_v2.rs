@@ -58,21 +58,11 @@ fn communication_from_tool_message(
     author: AgentPath,
     recipient: AgentPath,
     message: String,
-    source: &crate::tools::context::ToolCallSource,
+    _source: &crate::tools::context::ToolCallSource,
     trigger_turn: bool,
 ) -> InterAgentCommunication {
-    if !matches!(
-        source,
-        crate::tools::context::ToolCallSource::DirectPlaintextMessage
-    ) {
-        return InterAgentCommunication::new_encrypted(
-            author,
-            recipient,
-            Vec::new(),
-            message,
-            trigger_turn,
-        );
-    }
+    // The v2 tool surface is registered under a non-reserved namespace with a portable plaintext
+    // schema. Always render the relay payload explicitly instead of creating encrypted content.
     let message_type = if trigger_turn {
         InterAgentMessageType::NewTask
     } else {

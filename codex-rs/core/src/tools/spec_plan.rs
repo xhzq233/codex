@@ -99,6 +99,7 @@ use std::sync::Arc;
 use tracing::instrument;
 
 const MULTI_AGENT_V2_NAMESPACE_DESCRIPTION: &str = "Tools for spawning and managing sub-agents.";
+const MULTI_AGENT_V2_PLAINTEXT_NAMESPACE: &str = "agents";
 const IMAGE_GEN_NAMESPACE: &str = "image_gen";
 const IMAGEGEN_TOOL_NAME: &str = "imagegen";
 
@@ -989,9 +990,10 @@ fn add_collaboration_tools(context: &CoreToolPlanContext<'_>, registry: &mut Too
             } else {
                 ToolExposure::Direct
             };
-            let tool_namespace = namespace_tools_enabled(turn_context)
-                .then_some(turn_context.config.multi_agent_v2.tool_namespace.as_deref())
-                .flatten();
+            // `collaboration.*` is reserved by the OpenAI backend and requires its encrypted
+            // schema. Use a non-reserved namespace for the portable plaintext tool surface.
+            let tool_namespace =
+                namespace_tools_enabled(turn_context).then_some(MULTI_AGENT_V2_PLAINTEXT_NAMESPACE);
             let agent_type_description =
                 agent_type_description(turn_context, context.default_agent_type_description);
             let hide_spawn_agent_metadata =
