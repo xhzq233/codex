@@ -74,6 +74,10 @@ impl FeatureConfig for NonPrefixedMcpToolNamesConfigToml {
 pub struct MultiAgentV2ConfigToml {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
+    /// Deprecated compatibility field. Its value is ignored; v2 collaboration messages are
+    /// always plaintext.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encrypt_inter_agent_messages: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(range(min = 1))]
     pub max_concurrent_threads_per_session: Option<usize>,
