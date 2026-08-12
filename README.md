@@ -9,6 +9,39 @@ If you want Codex in your code editor (VS Code, Cursor, Windsurf), <a href="http
 
 ---
 
+## Relay subagents fork
+
+This branch is an unofficial fork of `0.147.0-alpha.6.5` with a focused local
+CLI patch set for relay-routed subagents and the ChatGPT App Chrome runtime.
+
+The patch set:
+
+- exposes v2 collaboration tools under the portable `agents.*` namespace instead of the reserved encrypted `collaboration.*` namespace;
+- sends `spawn_agent`, `send_message`, and `followup_task` payloads as ordinary plaintext JSON while retaining the `NEW_TASK` / `MESSAGE` wrappers;
+- keeps the legacy `encrypt_inter_agent_messages` config field parseable, but does not use it to select the transport;
+- drops the last bounded-fork compaction checkpoint and everything before it when `fork_turns=N` crosses a `Compacted` rollout item, preventing an opaque summary from crossing providers;
+- starts the signed ChatGPT App browser child through a narrow macOS broker, so Chrome pages opened in the App can be read by the CLI.
+
+Build and test this branch from source:
+
+```shell
+git clone https://github.com/xhzq233/codex.git
+cd codex
+git checkout patch/plaintext-on-0.147.0-alpha.6.5
+cd codex-rs
+cargo build --release -p codex-cli --bin codex
+just test -p codex-core
+```
+
+On macOS, the resulting binary is `codex-rs/target/release/codex`. Keep it as a
+separate executable while testing; do not overwrite an existing Homebrew or App
+installation. The Chrome broker is macOS-only and requires the signed ChatGPT
+App runtime layout under `/Applications/ChatGPT.app`.
+
+Known limits: this is not an official OpenAI release; `fork_turns=all` keeps its
+existing full-history semantics; and the browser integration depends on the
+ChatGPT App runtime and its currently supported layout.
+
 ## Quickstart
 
 ### Installing and running Codex CLI
