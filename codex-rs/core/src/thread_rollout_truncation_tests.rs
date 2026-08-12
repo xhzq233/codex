@@ -6,6 +6,7 @@ use codex_protocol::ResponseItemId;
 use codex_protocol::error::CodexErrorDetails;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ReasoningItemReasoningSummary;
+use codex_protocol::protocol::CompactedItem;
 use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::ThreadRolledBackEvent;
 use codex_protocol::protocol::TurnCompleteEvent;
@@ -69,6 +70,21 @@ fn inter_agent_communication(text: &str, trigger_turn: bool) -> RolloutItem {
         text.to_string(),
         trigger_turn,
     ))
+}
+
+fn compacted_checkpoint(encrypted_content: &str) -> RolloutItem {
+    RolloutItem::Compacted(CompactedItem {
+        message: String::new(),
+        replacement_history: Some(vec![ResponseItem::Compaction {
+            id: None,
+            encrypted_content: encrypted_content.to_string(),
+            internal_chat_message_metadata_passthrough: None,
+        }]),
+        window_number: None,
+        first_window_id: None,
+        previous_window_id: None,
+        window_id: None,
+    })
 }
 
 fn turn_started(turn_id: &str) -> RolloutItem {
@@ -414,6 +430,31 @@ fn truncates_rollout_to_last_n_fork_turns_counts_trigger_turn_messages() {
 
     let truncated = truncate_rollout_to_last_n_fork_turns(rollout.clone(), /*n_from_end*/ 2);
     let expected = rollout[4..].to_vec();
+
+    assert_eq!(
+        serde_json::to_value(&truncated).unwrap(),
+        serde_json::to_value(&expected).unwrap()
+    );
+}
+
+#[test]
+fn truncates_rollout_to_last_n_fork_turns_keeps_only_items_after_last_compaction() {
+    let rollout = vec![
+        RolloutItem::ResponseItem(user_msg("before first compaction")),
+        RolloutItem::ResponseItem(assistant_msg("first answer")),
+        compacted_checkpoint("provider-a-first-checkpoint"),
+        RolloutItem::ResponseItem(user_msg("between compactions")),
+        RolloutItem::ResponseItem(assistant_msg("second answer")),
+        compacted_checkpoint("provider-a-second-checkpoint"),
+        RolloutItem::ResponseItem(user_msg("after last compaction")),
+        RolloutItem::ResponseItem(assistant_msg("third answer")),
+    ];
+
+    let truncated = truncate_rollout_to_last_n_fork_turns(rollout, /*n_from_end*/ 3);
+    let expected = vec![
+        RolloutItem::ResponseItem(user_msg("after last compaction")),
+        RolloutItem::ResponseItem(assistant_msg("third answer")),
+    ];
 
     assert_eq!(
         serde_json::to_value(&truncated).unwrap(),

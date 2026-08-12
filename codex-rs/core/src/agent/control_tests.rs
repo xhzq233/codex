@@ -1242,6 +1242,124 @@ async fn spawn_agent_numeric_fork_from_compacted_paginated_parent_clamps_to_prov
 }
 
 #[tokio::test]
+async fn spawn_agent_numeric_fork_from_compacted_legacy_parent_keeps_post_compaction_inputs() {
+    let harness = AgentControlHarness::new().await;
+    let (parent_thread_id, parent_thread) = harness.start_thread().await;
+    let parent_spawn_call_id = "spawn-call-legacy-numeric-compaction".to_string();
+    parent_thread
+        .session
+        .persist_rollout_items(&[
+            RolloutItem::ResponseItem(ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "parent turn before compaction".to_string(),
+                }],
+                phase: None,
+                internal_chat_message_metadata_passthrough: None,
+            }),
+            RolloutItem::ResponseItem(assistant_message(
+                "parent answer before compaction",
+                Some(MessagePhase::FinalAnswer),
+            )),
+            RolloutItem::Compacted(CompactedItem {
+                message: String::new(),
+                replacement_history: Some(vec![
+                    ResponseItem::Message {
+                        id: None,
+                        role: "user".to_string(),
+                        content: vec![ContentItem::InputText {
+                            text: "provider-a compacted parent summary".to_string(),
+                        }],
+                        phase: None,
+                        internal_chat_message_metadata_passthrough: None,
+                    },
+                    ResponseItem::Compaction {
+                        id: None,
+                        encrypted_content: "provider-a-opaque-compaction".to_string(),
+                        internal_chat_message_metadata_passthrough: None,
+                    },
+                ]),
+                window_number: None,
+                first_window_id: None,
+                previous_window_id: None,
+                window_id: None,
+            }),
+            RolloutItem::ResponseItem(ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "parent turn after compaction".to_string(),
+                }],
+                phase: None,
+                internal_chat_message_metadata_passthrough: None,
+            }),
+            RolloutItem::ResponseItem(assistant_message(
+                "parent answer after compaction",
+                Some(MessagePhase::FinalAnswer),
+            )),
+            RolloutItem::ResponseItem(spawn_agent_call(&parent_spawn_call_id)),
+        ])
+        .await;
+    parent_thread.ensure_rollout_materialized().await;
+    parent_thread
+        .flush_rollout()
+        .await
+        .expect("parent rollout should flush");
+
+    let child_thread_id = harness
+        .spawn_anonymous_child(
+            parent_thread_id,
+            SpawnAgentOptions {
+                fork_parent_spawn_call_id: Some(parent_spawn_call_id),
+                fork_mode: Some(SpawnAgentForkMode::LastNTurns(2)),
+                ..Default::default()
+            },
+        )
+        .await;
+    let child_thread = harness
+        .manager
+        .get_thread(child_thread_id)
+        .await
+        .expect("child thread should be registered");
+    let child_history = child_thread.session.clone_history().await;
+    let child_items = child_history.raw_items();
+
+    assert!(history_contains_text(
+        child_items,
+        "parent turn after compaction"
+    ));
+    assert!(history_contains_text(
+        child_items,
+        "parent answer after compaction"
+    ));
+    assert!(!history_contains_text(
+        child_items,
+        "parent turn before compaction"
+    ));
+    assert!(!history_contains_text(
+        child_items,
+        "provider-a compacted parent summary"
+    ));
+    assert!(
+        !child_items
+            .iter()
+            .any(|item| matches!(item, ResponseItem::Compaction { .. })),
+        "bounded child history must not inherit provider-opaque compaction inputs"
+    );
+
+    let _ = harness
+        .control
+        .shutdown_live_agent(child_thread_id)
+        .await
+        .expect("child shutdown should submit");
+    let _ = parent_thread
+        .submit(Op::Shutdown {})
+        .await
+        .expect("parent shutdown should submit");
+}
+
+#[tokio::test]
 async fn spawn_agent_can_fork_parent_thread_history_with_sanitized_items() {
     let harness = AgentControlHarness::new().await;
     let mut parent_config = harness.config.clone();

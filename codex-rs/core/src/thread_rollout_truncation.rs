@@ -258,6 +258,10 @@ pub fn truncate_rollout_before_turn_id(
 ///
 /// If fewer than or equal to `n_from_end` fork turns exist, this keeps from the first fork-turn
 /// boundary and still drops pre-turn startup context.
+///
+/// If the selected suffix crosses a compaction checkpoint, only items after the last checkpoint
+/// are safe to inherit. The checkpoint and its replacement history can contain provider-opaque
+/// inputs that a child routed to another provider cannot decode.
 pub(crate) fn truncate_rollout_to_last_n_fork_turns(
     mut items: Vec<RolloutItem>,
     n_from_end: usize,
@@ -275,7 +279,14 @@ pub(crate) fn truncate_rollout_to_last_n_fork_turns(
     else {
         return Vec::new();
     };
-    items.split_off(keep_idx)
+    let mut truncated = items.split_off(keep_idx);
+    let Some(last_compaction_idx) = truncated
+        .iter()
+        .rposition(|item| matches!(item, RolloutItem::Compacted(_)))
+    else {
+        return truncated;
+    };
+    truncated.split_off(last_compaction_idx.saturating_add(1))
 }
 
 fn is_real_user_message_boundary(item: &ResponseItem) -> bool {
